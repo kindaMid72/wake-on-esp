@@ -1,8 +1,8 @@
 # wake-on-esp
 
-Wake a sleeping laptop from anywhere with an ESP32-S3 and [ntfy](https://ntfy.sh).
+Wake a sleeping computer from anywhere with an ESP32-S3 and [ntfy](https://ntfy.sh).
 
-The ESP32-S3 plugs into the laptop's USB port and appears as a USB keyboard. It joins your WiFi and listens to an ntfy topic. When a message arrives it signals USB remote wakeup and taps Left Shift, which wakes the laptop from suspend. No port forwarding, no VPN, no server of your own: send the message from the ntfy phone app, `curl`, or any script.
+The ESP32-S3 plugs into the computer's USB port and appears as a USB keyboard. It joins your WiFi and listens to an ntfy topic. When a message arrives it signals USB remote wakeup and taps Left Shift, which wakes the computer from suspend. No port forwarding, no VPN, no server of your own: send the message from the ntfy phone app, `curl`, or any script.
 
 After each wake the board posts a short status message to the same topic, for example:
 
@@ -13,11 +13,11 @@ Trigger: "wake"
 WiFi -58 dBm, up 42 min
 ```
 
-This is not Wake-on-LAN. It does not send magic packets. It simulates a keypress, so it works on laptops whose Ethernet/WiFi cannot wake the machine.
+This is not Wake-on-LAN. It does not send magic packets. It simulates a keypress, so it works on computers whose Ethernet/WiFi cannot wake the machine.
 
 ## Requirements
 - ESP32-S3 board with **two USB-C ports** (for example ESP32-S3-DevKitC-1): `UART`/`COM` (serial bridge) and `USB` (native).
-- Laptop that keeps USB powered during sleep and allows USB wake (Linux, Windows).
+- Computer that keeps USB powered during sleep and allows USB wake (Linux, Windows).
 - 2.4 GHz WiFi with internet access.
 - [PlatformIO](https://platformio.org/install/cli).
 
@@ -26,19 +26,19 @@ This is not Wake-on-LAN. It does not send magic packets. It simulates a keypress
    ```sh
    cp .env.example .env
    ```
-   Edit `.env`: `WIFI_SSID`, `WIFI_PASS`, `DEVICE_NAME`, and a long random `NTFY_TOPIC`. On public ntfy.sh the topic name is the only secret: anyone who knows it can wake your laptop. Generate one with `echo wake-$(head -c 24 /dev/urandom | base32 | tr -d '=' | tr A-Z a-z)`. For a protected topic or self-hosted server set `NTFY_HOST` and `NTFY_AUTH` (full header value, for example `Bearer tk_xxx`).
+   Edit `.env`: `WIFI_SSID`, `WIFI_PASS`, `DEVICE_NAME`, and a long random `NTFY_TOPIC`. On public ntfy.sh the topic name is the only secret: anyone who knows it can wake your computer. Generate one with `echo wake-$(head -c 24 /dev/urandom | base32 | tr -d '=' | tr A-Z a-z)`. For a protected topic or self-hosted server set `NTFY_HOST` and `NTFY_AUTH` (full header value, for example `Bearer tk_xxx`).
 2. Flash through the **UART/COM** port (auto-reset works there):
    ```sh
    make flash        # or: pio run -t upload
    ```
    Linux needs serial access: `make setup` adds you to `dialout` (log out and in afterwards).
 3. Move the cable to the **native USB** port. Keep the UART cable plugged in as well if you want serial logs (`make monitor`).
-4. Allow the laptop to be woken by the board (see below).
-5. Suspend the laptop, wait about 10 seconds, then send a message: `make test`, the ntfy app, or `curl -d wake https://ntfy.sh/<topic>`.
+4. Allow the computer to be woken by the board (see below).
+5. Suspend the computer, wait about 10 seconds, then send a message: `make test`, the ntfy app, or `curl -d wake https://ntfy.sh/<topic>`.
 
 Subscribe to the same topic in the ntfy app to see the status messages.
 
-## Laptop configuration
+## Computer configuration
 The firmware advertises USB remote wakeup. The OS must also allow it.
 
 **Linux**
@@ -73,16 +73,16 @@ The wake key is `WAKE_KEY` in `src/main.cpp` (default Left Shift).
 | Symptom | Check |
 |---|---|
 | Status says `wake FAILED`, keyboard not ready | Cable is on the UART port instead of the native `USB` port |
-| Laptop does not wake, no `power/wakeup` file | Reflash; descriptor must advertise remote wakeup |
+| Computer does not wake, no `power/wakeup` file | Reflash; descriptor must advertise remote wakeup |
 | `power/wakeup` is `disabled` | Run `scripts/enable-wake-linux.sh`; check BIOS USB wake |
 | No status messages | Serial log (`make monitor`): WiFi up? `ntfy stream open`? |
 | Slow first connect after power-up | DNS/TLS retry loop; wait 30 s |
 
 ## Limits
-- Does not wake from hibernate or shutdown on most laptops (USB unpowered).
+- Does not wake from hibernate or shutdown on most computers (USB unpowered).
 - The USB port must stay powered in sleep, and the ESP32 needs WiFi the whole time.
 - TLS is encrypted but the server certificate is not verified (`client.setInsecure()`); pin a CA with `setCACert()` if that matters to you.
-- Anyone who can publish to the topic can wake the laptop. Use a long random topic or an authenticated server.
+- Anyone who can publish to the topic can wake the computer. Use a long random topic or an authenticated server.
 
 ## License
 MIT

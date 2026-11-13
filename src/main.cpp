@@ -7,7 +7,7 @@
 #include "tusb.h"
 
 // Wake sequence: ask host to resume the bus (remote wakeup), then tap a key.
-// Left Shift is harmless if the laptop is already awake.
+// Left Shift is harmless if the computer is already awake.
 static constexpr uint8_t WAKE_KEY = KEY_LEFT_SHIFT;
 // ntfy sends a keepalive every ~45 s; no bytes for this long = half-open connection, reconnect.
 static constexpr uint32_t SILENCE_LIMIT_MS = 75000;
@@ -46,7 +46,7 @@ static void sendReply(const WakeResult &r, const String &trigger) {
   String title = String(DEVICE_NAME) + (r.keySent ? ": wake sent" : ": wake FAILED") + REPLY_TITLE_SUFFIX;
   String body;
   if (!r.keySent) body = "USB keyboard not ready (cable on native port? host not mounted).";
-  else if (!r.wasSuspended) body = "Laptop was already awake, key tapped.";
+  else if (!r.wasSuspended) body = "Computer was already awake, key tapped.";
   else if (r.resumed) body = "Resumed from sleep in " + String(r.ms / 1000.0, 1) + "s, key tapped.";
   else body = "Wakeup signal sent, host did not resume (wake not enabled?).";
   if (trigger.length()) body += "\nTrigger: \"" + trigger.substring(0, 40) + "\"";

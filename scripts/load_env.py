@@ -14,7 +14,7 @@ for key in ("WIFI_SSID", "WIFI_PASS", "NTFY_HOST", "NTFY_TOPIC", "NTFY_AUTH", "D
     if key == "NTFY_AUTH":
         vals.setdefault(key, "")
     elif key == "DEVICE_NAME":
-        vals.setdefault(key, "laptop")
+        vals.setdefault(key, "computer")
     elif not vals.get(key):
         raise SystemExit("%s missing in .env" % key)
     env.Append(CPPDEFINES=[(key, env.StringifyMacro(vals[key]))])
