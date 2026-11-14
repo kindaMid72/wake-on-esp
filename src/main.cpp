@@ -76,6 +76,30 @@ static constexpr uint32_t PORTAL_MS = 300000;       // portal stays open this lo
 static constexpr int NTFY_FAILS_BEFORE_SWITCH = 2;  // associated but no internet: move to the next network
 static int wifiCur = 0;    // index of the network we are (or were last) on
 static int wifiStart = 0;  // where the next ensureWifi() scan begins; 0 = primary first
+static uint32_t offlineSince = 0;  // millis() of the first failed ntfy connect in the current outage; 0 = none
+
+static constexpr uint32_t NET_TEST_MS = 5000;  // TCP connect timeout of the post-connect internet test
+
+// Cheap reachability test of the ntfy host: DNS + plain TCP connect to :443 (no TLS handshake, nothing sent).
+// Run right after a network is joined, so a captive/dead uplink is detected in seconds, not after ntfy retries.
+// DNS gets a second try: the resolver can lag a moment behind the DHCP lease.
+static bool hasInternet() {
+  IPAddress ip;
+  bool dns = false;
+  for (int attempt = 0; attempt < 2 && !dns; attempt++) {
+    if (attempt) uiDelay(1500);
+    dns = WiFi.hostByName(cfg.v[HOST].c_str(), ip) == 1;
+  }
+  if (!dns) {
+    Log.printf("[%lu] net test: cannot resolve '%s'\n", millis(), cfg.v[HOST].c_str());
+    return false;
+  }
+  WiFiClient probe;
+  bool ok = probe.connect(ip, 443, NET_TEST_MS);
+  probe.stop();
+  Log.printf("[%lu] net test: %s:443 %s\n", millis(), ip.toString().c_str(), ok ? "reachable" : "unreachable");
+  return ok;
+}
 
 static void ensureWifi() {
   if (WiFi.status() == WL_CONNECTED) return;
@@ -86,10 +110,11 @@ static void ensureWifi() {
   for (;;) {
     if (portalRequested) {
       runPortal(PORTAL_MS, false, nullptr);
+      offlineSince = 0;
       since = millis();
       if (WiFi.status() == WL_CONNECTED) return;
     }
-    bool any = false;
+    bool any = false, noNet = false;  // noNet: joined at least one network this round, none had internet
     for (int k = 0; k < NETS && !portalRequested; k++) {
       int i = (wifiStart + k) % NETS;
       const String &ssid = cfg.ssid(i);
@@ -102,20 +127,29 @@ static void ensureWifi() {
       uint32_t t0 = millis();
       while (WiFi.status() != WL_CONNECTED && millis() - t0 < WIFI_TRY_MS && !portalRequested) uiDelay(250);
       if (WiFi.status() == WL_CONNECTED) {
-        wifiCur = i;
-        wifiStart = 0;  // after a later drop, prefer the primary again
         Log.printf("[%lu] wifi ok %s on '%s' rssi %d\n", millis(), WiFi.localIP().toString().c_str(), ssid.c_str(), WiFi.RSSI());
-        return;
+        if (hasInternet()) {
+          wifiCur = i;
+          wifiStart = 0;  // after a later drop, prefer the primary again
+          return;
+        }
+        noNet = true;
+        Log.printf("[%lu] wifi: '%s' has no internet, trying next\n", millis(), ssid.c_str());
+        continue;
       }
       if (!portalRequested)
         Log.printf("[%lu] wifi: '%s' failed, status=%d (1=no AP, 4=bad password/auth, 6=disconnected)\n", millis(), ssid.c_str(), (int)WiFi.status());
     }
     if (portalRequested) continue;
-    if (!any || millis() - since >= PORTAL_AFTER_MS) {
-      Log.printf("[%lu] wifi: %s, opening setup portal\n", millis(), any ? "no network reachable" : "no network configured");
+    if (!any || noNet || millis() - since >= PORTAL_AFTER_MS) {
+      Log.printf("[%lu] wifi: %s, opening setup portal\n", millis(),
+                 !any ? "no network configured" : noNet ? "no network has internet" : "no network reachable");
       int net = 0;
-      if (runPortal(PORTAL_MS, any, &net)) { wifiCur = net; wifiStart = 0; return; }
+      bool joined = runPortal(PORTAL_MS, any, &net);
+      offlineSince = 0;
       since = millis();
+      // The portal exits as soon as a retry joins a network; accept it only if it really has internet.
+      if (joined && hasInternet()) { wifiCur = net; wifiStart = 0; return; }
     }
   }
 }
@@ -138,6 +172,16 @@ static bool openStream() {
                fails + 1, NTFY_FAILS_BEFORE_SWITCH, WiFi.SSID().c_str(), WiFi.localIP().toString().c_str(),
                WiFi.gatewayIP().toString().c_str(), WiFi.dnsIP().toString().c_str(),
                dnsOk ? ip.toString().c_str() : "FAIL", err, (unsigned)ESP.getFreeHeap());
+    if (!offlineSince) offlineSince = millis();
+    if (millis() - offlineSince >= PORTAL_AFTER_MS) {
+      // Associated but the internet stays unreachable (also after cycling all networks): let the user fix it.
+      Log.printf("[%lu] no internet for %lu s, opening setup portal\n", millis(), (unsigned long)((millis() - offlineSince) / 1000));
+      fails = 0;
+      client.stop();
+      runPortal(PORTAL_MS, false, nullptr);  // returns on timeout; saving reboots
+      offlineSince = 0;
+      return false;
+    }
     if (++fails >= NTFY_FAILS_BEFORE_SWITCH) {
       fails = 0;
       wifiStart = (wifiCur + 1) % NETS;
@@ -147,6 +191,7 @@ static bool openStream() {
     return false;
   }
   fails = 0;
+  offlineSince = 0;
   Log.printf("[%lu] ntfy stream open (since=%s)\n", millis(), lastTime.length() ? lastTime.c_str() : "now");
   client.printf("GET /%s/json%s%s HTTP/1.1\r\nHost: %s\r\nAccept: application/x-ndjson\r\n"
                 "User-Agent: esp32-wake\r\nConnection: keep-alive\r\n",
@@ -195,6 +240,7 @@ void loop() {
   if (portalRequested) {
     client.stop();
     runPortal(PORTAL_MS, false, nullptr);  // returns on timeout; saving reboots
+    offlineSince = 0;
   }
   if (WiFi.status() != WL_CONNECTED) client.stop();  // network lost: fall through to reconnect (tries all networks)
   static uint32_t lastRx = millis();
