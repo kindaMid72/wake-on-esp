@@ -27,7 +27,7 @@ This is not Wake-on-LAN. It does not send magic packets. It simulates a keypress
    cp .env.example .env
    ```
    Edit `.env`: `WIFI_SSID`, `WIFI_PASS`, `DEVICE_NAME`, and a long random `NTFY_TOPIC`. Optional backup networks: `WIFI_SSID2`/`WIFI_PASS2` and `WIFI_SSID3`/`WIFI_PASS3`, used in order if the primary is out of range or has no internet. SSIDs may contain spaces; write them without quotes. On public ntfy.sh the topic name is the only secret: anyone who knows it can wake your computer. Generate one with `echo wake-$(head -c 24 /dev/urandom | base32 | tr -d '=' | tr A-Z a-z)`. For a protected topic or self-hosted server set `NTFY_HOST` and `NTFY_AUTH` (full header value, for example `Bearer tk_xxx`).
-2. Linux only, once: `make setup` (needs sudo). It adds you to `dialout` and installs the USB wake rule. **Log out and back in afterwards**, otherwise flashing fails with `Permission denied: /dev/ttyACM0`.
+2. Linux only, once: `make setup` (needs sudo). It adds you to `dialout` and installs the USB wake rule. Log out and back in when convenient; until then `make flash` and `make monitor` borrow the group automatically (`scripts/with-serial.sh`).
 3. Plug the board in through the native `USB` port and flash:
    ```sh
    make flash        # or: pio run -t upload
@@ -78,7 +78,7 @@ The wake key is `WAKE_KEY` in `src/main.cpp` (default Left Shift).
 | Computer does not wake, no `power/wakeup` file | Reflash; descriptor must advertise remote wakeup |
 | `power/wakeup` is `disabled` | Run `scripts/enable-wake-linux.sh`; check BIOS USB wake |
 | No status messages | `make monitor`: which network connected, `ntfy connect failed` lines show DNS/TLS errors |
-| `make flash`: `Permission denied: /dev/ttyACM0` | Not in `dialout` yet: `make setup`, then log out and in |
+| `Permission denied: /dev/ttyACM0` (only when running `pio` directly) | Run `make setup` and log out and in, or use `make flash` |
 | `make flash`: `Failed to connect` | Hold BOOT, tap RESET, release BOOT, retry |
 | `make: PlatformIO not found` | Install PlatformIO or `make PIO=/path/to/platformio flash` |
 | Slow first connect after power-up | DNS/TLS retry loop; wait 30 s |

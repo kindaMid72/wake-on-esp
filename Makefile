@@ -20,10 +20,10 @@ setup:
 build:
 	$(PIO) run
 flash:
-	-$(PIO_PY) scripts/enter-bootloader.py
-	$(PIO) run -t upload
-	-$(PIO_PY) $(HOME)/.platformio/packages/tool-esptoolpy/esptool.py --chip esp32s3 --after watchdog-reset read-mac >/dev/null 2>&1
+	-scripts/with-serial.sh $(PIO_PY) scripts/enter-bootloader.py
+	scripts/with-serial.sh $(PIO) run -t upload
+	-scripts/with-serial.sh $(PIO_PY) $(HOME)/.platformio/packages/tool-esptoolpy/esptool.py --chip esp32s3 --after watchdog-reset read-mac >/dev/null 2>&1
 monitor:
-	$(PIO) device monitor
+	scripts/with-serial.sh $(PIO) device monitor
 test:
 	curl -s -d "wake" https://$(NTFY_HOST)/$(NTFY_TOPIC)
