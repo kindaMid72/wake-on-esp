@@ -77,7 +77,7 @@ static const WifiCred WIFI_NETS[] = {
   {WIFI_SSID, WIFI_PASS}, {WIFI_SSID2, WIFI_PASS2}, {WIFI_SSID3, WIFI_PASS3},
 };
 static constexpr uint32_t WIFI_TRY_MS = 15000;
-static constexpr int NTFY_FAILS_BEFORE_SWITCH = 3;  // associated but no internet: move to the next network
+static constexpr int NTFY_FAILS_BEFORE_SWITCH = 2;  // associated but no internet: move to the next network
 static constexpr int NETS = sizeof(WIFI_NETS) / sizeof(WIFI_NETS[0]);
 static int wifiCur = 0;    // index of the network we are (or were last) on
 static int wifiStart = 0;  // where the next ensureWifi() scan begins; 0 = primary first
@@ -94,6 +94,7 @@ static void ensureWifi() {
       if (!n.ssid[0]) continue;
       Log.printf("[%lu] wifi: trying '%s'\n", millis(), n.ssid);
       WiFi.disconnect();
+      delay(500);  // let the stack settle; an immediate begin() after a drop can time out silently
       WiFi.begin(n.ssid, n.pass);
       uint32_t t0 = millis();
       while (WiFi.status() != WL_CONNECTED && millis() - t0 < WIFI_TRY_MS) delay(250);
@@ -116,14 +117,16 @@ static bool openStream() {
   static int fails = 0;
   ensureWifi();
   client.setInsecure();  // encrypted, broker cert not verified; use setCACert() to pin
-  if (!client.connect(NTFY_HOST, 443)) {
-    IPAddress ip;
+  IPAddress ip;
+  // DNS first: a network with a dead uplink fails here in seconds instead of stalling in connect().
+  bool dnsOk = WiFi.hostByName(NTFY_HOST, ip) == 1;
+  if (!dnsOk || !client.connect(NTFY_HOST, 443)) {  // hostname, not ip: TLS needs SNI
     char err[100] = "";
     client.lastError(err, sizeof err);
     Log.printf("[%lu] ntfy connect failed (%d/%d): ssid='%s' ip=%s gw=%s dns=%s resolve=%s tls_err='%s' heap=%u\n", millis(),
                fails + 1, NTFY_FAILS_BEFORE_SWITCH, WiFi.SSID().c_str(), WiFi.localIP().toString().c_str(),
                WiFi.gatewayIP().toString().c_str(), WiFi.dnsIP().toString().c_str(),
-               WiFi.hostByName(NTFY_HOST, ip) == 1 ? ip.toString().c_str() : "FAIL", err, (unsigned)ESP.getFreeHeap());
+               dnsOk ? ip.toString().c_str() : "FAIL", err, (unsigned)ESP.getFreeHeap());
     if (++fails >= NTFY_FAILS_BEFORE_SWITCH) {
       fails = 0;
       wifiStart = (wifiCur + 1) % NETS;

@@ -66,7 +66,7 @@ The wake key is `WAKE_KEY` in `src/main.cpp` (default Left Shift).
 
 ## How it works
 - Holds an HTTPS stream to `https://<host>/<topic>/json`. ntfy sends a keepalive every 45 s; 75 s of silence forces a reconnect.
-- If the connected WiFi has no internet (3 consecutive connect failures) it switches to the next configured network; after a WiFi drop it tries the primary first again.
+- If the connected WiFi has no internet (2 consecutive DNS/connect failures, about 20 s) it switches to the next configured network; after a WiFi drop it tries the primary first again.
 - After a reconnect it asks ntfy for events since the last one it saw and de-duplicates by message id, so messages sent during a short drop are not lost.
 - On a message: if the USB bus is suspended it calls remote wakeup, waits for resume, then taps the key.
 - Messages ending in `(esp32)` in the title are the board's own status messages and are ignored.
