@@ -5,6 +5,9 @@
 #include <USB.h>
 #include <USBHIDKeyboard.h>
 #include "tusb.h"
+#include "common.h"
+#include "config.h"
+#include "setup_ui.h"
 
 // Wake sequence: ask host to resume the bus (remote wakeup), then tap a key.
 // Left Shift is harmless if the computer is already awake.
@@ -14,13 +17,9 @@ static constexpr uint32_t SILENCE_LIMIT_MS = 75000;
 
 USBHIDKeyboard keyboard;
 WiFiClientSecure client;
-
-// Debug log goes to both the UART pins and the USB CDC port (/dev/ttyACM*), so no bridge is needed.
 USBCDC USBSerial;
-struct TeeLog : Print {
-  size_t write(uint8_t c) override { Serial0.write(c); USBSerial.write(c); return 1; }
-  size_t write(const uint8_t *b, size_t n) override { Serial0.write(b, n); USBSerial.write(b, n); return n; }
-} Log;
+TeeLog Log;
+static Config cfg;  // saved settings (NVS), falling back to the .env defaults
 
 // Marks our own status messages so the subscriber loop ignores them (same topic, no echo loop).
 static const char *REPLY_TITLE_SUFFIX = " (esp32)";
@@ -48,9 +47,9 @@ static WakeResult doWake() {
   return r;
 }
 
-// Short status message back to the same ntfy topic: "<DEVICE_NAME> woken" / "wake failed".
+// Short status message back to the same ntfy topic: "<device name> woken" / "wake failed".
 static void sendReply(const WakeResult &r) {
-  String title = String(DEVICE_NAME) + (r.keySent ? ": wake sent" : ": wake FAILED") + REPLY_TITLE_SUFFIX;
+  String title = cfg.v[NAME] + (r.keySent ? ": wake sent" : ": wake FAILED") + REPLY_TITLE_SUFFIX;
   String body;
   if (!r.keySent) body = "USB keyboard not ready (cable on native port? host not mounted).";
   else if (!r.wasSuspended) body = "Computer was already awake, key tapped.";
@@ -62,22 +61,19 @@ static void sendReply(const WakeResult &r) {
   c.setInsecure();
   HTTPClient http;
   http.setTimeout(8000);
-  if (!http.begin(c, String("https://") + NTFY_HOST + "/" + NTFY_TOPIC)) return;
+  if (!http.begin(c, String("https://") + cfg.v[HOST] + "/" + cfg.v[TOPIC])) return;
   http.addHeader("Title", title);
-  if (strlen(NTFY_AUTH)) http.addHeader("Authorization", NTFY_AUTH);
+  if (cfg.v[AUTH].length()) http.addHeader("Authorization", cfg.v[AUTH]);
   int code = http.POST(body);
   Log.printf("[%lu] reply -> %d\n", millis(), code);
   http.end();
 }
 
-struct WifiCred { const char *ssid; const char *pass; };
-// Priority order: primary first, then backups. Empty SSID = slot unused.
-static const WifiCred WIFI_NETS[] = {
-  {WIFI_SSID, WIFI_PASS}, {WIFI_SSID2, WIFI_PASS2}, {WIFI_SSID3, WIFI_PASS3},
-};
+// Networks are cfg.ssid(0..NETS-1) in priority order: primary first, then backups. Empty SSID = slot unused.
 static constexpr uint32_t WIFI_TRY_MS = 15000;
+static constexpr uint32_t PORTAL_AFTER_MS = 30000;  // no network connects for this long: open the setup portal
+static constexpr uint32_t PORTAL_MS = 300000;       // portal stays open this long (extended while a phone is connected)
 static constexpr int NTFY_FAILS_BEFORE_SWITCH = 2;  // associated but no internet: move to the next network
-static constexpr int NETS = sizeof(WIFI_NETS) / sizeof(WIFI_NETS[0]);
 static int wifiCur = 0;    // index of the network we are (or were last) on
 static int wifiStart = 0;  // where the next ensureWifi() scan begins; 0 = primary first
 
@@ -86,24 +82,40 @@ static void ensureWifi() {
   WiFi.mode(WIFI_STA);
   WiFi.setSleep(false);  // modem sleep delays/loses idle TCP traffic
   WiFi.setAutoReconnect(false);  // we cycle networks ourselves
+  uint32_t since = millis();
   for (;;) {
-    for (int k = 0; k < NETS; k++) {
+    if (portalRequested) {
+      runPortal(PORTAL_MS, false, nullptr);
+      since = millis();
+      if (WiFi.status() == WL_CONNECTED) return;
+    }
+    bool any = false;
+    for (int k = 0; k < NETS && !portalRequested; k++) {
       int i = (wifiStart + k) % NETS;
-      const WifiCred &n = WIFI_NETS[i];
-      if (!n.ssid[0]) continue;
-      Log.printf("[%lu] wifi: trying '%s'\n", millis(), n.ssid);
+      const String &ssid = cfg.ssid(i);
+      if (!ssid.length()) continue;
+      any = true;
+      Log.printf("[%lu] wifi: trying '%s'\n", millis(), ssid.c_str());
       WiFi.disconnect();
-      delay(500);  // let the stack settle; an immediate begin() after a drop can time out silently
-      WiFi.begin(n.ssid, n.pass);
+      uiDelay(500);  // let the stack settle; an immediate begin() after a drop can time out silently
+      WiFi.begin(ssid.c_str(), cfg.pass(i).c_str());
       uint32_t t0 = millis();
-      while (WiFi.status() != WL_CONNECTED && millis() - t0 < WIFI_TRY_MS) delay(250);
+      while (WiFi.status() != WL_CONNECTED && millis() - t0 < WIFI_TRY_MS && !portalRequested) uiDelay(250);
       if (WiFi.status() == WL_CONNECTED) {
         wifiCur = i;
         wifiStart = 0;  // after a later drop, prefer the primary again
-        Log.printf("[%lu] wifi ok %s on '%s' rssi %d\n", millis(), WiFi.localIP().toString().c_str(), n.ssid, WiFi.RSSI());
+        Log.printf("[%lu] wifi ok %s on '%s' rssi %d\n", millis(), WiFi.localIP().toString().c_str(), ssid.c_str(), WiFi.RSSI());
         return;
       }
-      Log.printf("[%lu] wifi: '%s' failed, status=%d (1=no AP, 4=bad password/auth, 6=disconnected)\n", millis(), n.ssid, (int)WiFi.status());
+      if (!portalRequested)
+        Log.printf("[%lu] wifi: '%s' failed, status=%d (1=no AP, 4=bad password/auth, 6=disconnected)\n", millis(), ssid.c_str(), (int)WiFi.status());
+    }
+    if (portalRequested) continue;
+    if (!any || millis() - since >= PORTAL_AFTER_MS) {
+      Log.printf("[%lu] wifi: %s, opening setup portal\n", millis(), any ? "no network reachable" : "no network configured");
+      int net = 0;
+      if (runPortal(PORTAL_MS, any, &net)) { wifiCur = net; wifiStart = 0; return; }
+      since = millis();
     }
   }
 }
@@ -118,8 +130,8 @@ static bool openStream() {
   client.setInsecure();  // encrypted, broker cert not verified; use setCACert() to pin
   IPAddress ip;
   // DNS first: a network with a dead uplink fails here in seconds instead of stalling in connect().
-  bool dnsOk = WiFi.hostByName(NTFY_HOST, ip) == 1;
-  if (!dnsOk || !client.connect(NTFY_HOST, 443)) {  // hostname, not ip: TLS needs SNI
+  bool dnsOk = WiFi.hostByName(cfg.v[HOST].c_str(), ip) == 1;
+  if (!dnsOk || !client.connect(cfg.v[HOST].c_str(), 443)) {  // hostname, not ip: TLS needs SNI
     char err[100] = "";
     client.lastError(err, sizeof err);
     Log.printf("[%lu] ntfy connect failed (%d/%d): ssid='%s' ip=%s gw=%s dns=%s resolve=%s tls_err='%s' heap=%u\n", millis(),
@@ -138,8 +150,8 @@ static bool openStream() {
   Log.printf("[%lu] ntfy stream open (since=%s)\n", millis(), lastTime.length() ? lastTime.c_str() : "now");
   client.printf("GET /%s/json%s%s HTTP/1.1\r\nHost: %s\r\nAccept: application/x-ndjson\r\n"
                 "User-Agent: esp32-wake\r\nConnection: keep-alive\r\n",
-                NTFY_TOPIC, lastTime.length() ? "?since=" : "", lastTime.c_str(), NTFY_HOST);
-  if (strlen(NTFY_AUTH)) client.printf("Authorization: %s\r\n", NTFY_AUTH);
+                cfg.v[TOPIC].c_str(), lastTime.length() ? "?since=" : "", lastTime.c_str(), cfg.v[HOST].c_str());
+  if (cfg.v[AUTH].length()) client.printf("Authorization: %s\r\n", cfg.v[AUTH].c_str());
   client.print("\r\n");
   return true;
 }
@@ -148,6 +160,8 @@ void setup() {
   Serial0.begin(115200);
   USBSerial.setTxTimeoutMs(0);  // never block when no monitor is attached
   USBSerial.begin();
+  uiInit();
+  configLoad(cfg);
   WiFi.onEvent([](arduino_event_id_t, arduino_event_info_t info) {
     Log.printf("[%lu] wifi disconnected, reason=%d (2=auth expired, 15=4way handshake timeout/bad password, 201=no AP, 202=auth fail, 205=connection fail)\n",
                millis(), info.wifi_sta_disconnected.reason);
@@ -177,6 +191,11 @@ static String jsonNumber(const String &line, const char *key) {
 }
 
 void loop() {
+  uiPoll();
+  if (portalRequested) {
+    client.stop();
+    runPortal(PORTAL_MS, false, nullptr);  // returns on timeout; saving reboots
+  }
   if (WiFi.status() != WL_CONNECTED) client.stop();  // network lost: fall through to reconnect (tries all networks)
   static uint32_t lastRx = millis();
   static uint32_t lastBeat = 0;
@@ -187,7 +206,7 @@ void loop() {
   if (!client.connected()) {
     Log.printf("[%lu] stream down, reconnecting\n", millis());
     client.stop();
-    if (!openStream()) { delay(3000); return; }
+    if (!openStream()) { uiDelay(3000); return; }
     lastRx = millis();
   }
   if (client.available()) {
@@ -215,6 +234,6 @@ void loop() {
     Log.printf("[%lu] no data for %lu ms, dropping stream\n", millis(), SILENCE_LIMIT_MS);
     client.stop();
   } else {
-    delay(10);
+    uiDelay(10);
   }
 }

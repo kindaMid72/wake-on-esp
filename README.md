@@ -51,7 +51,30 @@ This installs a udev rule setting `power/wakeup=enabled` for vendor `303a`. `/pr
 
 **BIOS/UEFI**: enable USB wake or "USB power in sleep", and disable deep-sleep power saving (ErP) if present.
 
-## Configuration reference (`.env`)
+## Changing settings without rebuilding
+Settings live in flash on the device. `.env` only provides the defaults compiled in; anything saved on the device wins. A device flashed with no `.env` (or an empty one) opens the setup portal on first boot.
+
+**Setup portal (web page)**. The board opens the WiFi access point `wake-esp-setup` (password `wake-setup`) and serves a form at `http://192.168.4.1/` (phones also open it automatically as a captive portal). It lists nearby networks, and edits the three WiFi networks, ntfy server/topic/auth and device name. Saving reboots the board. Leave a password blank to keep the saved one; if you change an SSID, a blank password means an open network. There is also an "Erase saved settings" button.
+
+The portal opens:
+- automatically when no configured network connects for 30 s, or none is configured. While nobody is connected to the access point it keeps retrying the saved networks and closes itself once one connects;
+- when you hold the **BOOT** button for 3 s while the firmware is running and release it (hold 10 s instead to erase all saved settings). Do not hold BOOT while powering on or resetting: that enters the ROM bootloader;
+- with the serial command `portal`.
+
+It closes after 5 minutes (as long as a phone is connected it stays open).
+
+**Serial commands**. Connect to the USB port (`make monitor`, or any terminal on `/dev/ttyACM*`) and type:
+```
+show                 saved config (passwords hidden) and WiFi state
+set <key> [value]    save a value; no value = empty. Applied after reboot
+unset <key>          drop the saved value, back to the .env default
+portal               open the setup portal
+reset                erase all saved settings and reboot
+reboot
+```
+Keys: `ssid1 pass1 ssid2 pass2 ssid3 pass3 host topic auth name`. Example: `set ssid2 Cafe WiFi`, `set pass2 hunter22hunter`, `reboot`.
+
+## Configuration reference (`.env`, build-time defaults)
 | Key | Meaning |
 |---|---|
 | `WIFI_SSID`, `WIFI_PASS` | Primary WiFi credentials (2.4 GHz) |
@@ -86,6 +109,7 @@ The wake key is `WAKE_KEY` in `src/main.cpp` (default Left Shift).
 - Does not wake from hibernate or shutdown on most computers (USB unpowered).
 - The USB port must stay powered in sleep, and the ESP32 needs WiFi the whole time.
 - TLS is encrypted but the server certificate is not verified (`client.setInsecure()`); pin a CA with `setCACert()` if that matters to you.
+- The setup portal's access point uses the fixed password `wake-setup`: anyone within WiFi range who knows it (it is public in this README) can read the topic from the form and change the settings while the portal is open. Edit `AP_PASS` in `src/setup_ui.cpp` if that matters to you.
 - Anyone who can publish to the topic can wake the computer. Use a long random topic or an authenticated server.
 
 ## License
