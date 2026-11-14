@@ -64,14 +64,32 @@ static void sendReply(const WakeResult &r, const String &trigger) {
   http.end();
 }
 
+struct WifiCred { const char *ssid; const char *pass; };
+// Priority order: primary first, then backups. Empty SSID = slot unused.
+static const WifiCred WIFI_NETS[] = {
+  {WIFI_SSID, WIFI_PASS}, {WIFI_SSID2, WIFI_PASS2}, {WIFI_SSID3, WIFI_PASS3},
+};
+static constexpr uint32_t WIFI_TRY_MS = 15000;
+
 static void ensureWifi() {
   if (WiFi.status() == WL_CONNECTED) return;
   WiFi.mode(WIFI_STA);
   WiFi.setSleep(false);  // modem sleep delays/loses idle TCP traffic
-  WiFi.setAutoReconnect(true);
-  WiFi.begin(WIFI_SSID, WIFI_PASS);
-  while (WiFi.status() != WL_CONNECTED) delay(250);
-  Serial0.printf("wifi ok %s\n", WiFi.localIP().toString().c_str());
+  WiFi.setAutoReconnect(false);  // we cycle networks ourselves
+  for (;;) {
+    for (const WifiCred &n : WIFI_NETS) {
+      if (!n.ssid[0]) continue;
+      Serial0.printf("[%lu] wifi: trying %s\n", millis(), n.ssid);
+      WiFi.disconnect();
+      WiFi.begin(n.ssid, n.pass);
+      uint32_t t0 = millis();
+      while (WiFi.status() != WL_CONNECTED && millis() - t0 < WIFI_TRY_MS) delay(250);
+      if (WiFi.status() == WL_CONNECTED) {
+        Serial0.printf("wifi ok %s on %s\n", WiFi.localIP().toString().c_str(), n.ssid);
+        return;
+      }
+    }
+  }
 }
 
 // Opens the ntfy JSON stream. Only messages published after connecting are delivered,
@@ -118,6 +136,7 @@ static String jsonNumber(const String &line, const char *key) {
 }
 
 void loop() {
+  if (WiFi.status() != WL_CONNECTED) client.stop();  // network lost: fall through to reconnect (tries all networks)
   static uint32_t lastRx = millis();
   if (!client.connected()) {
     Serial0.printf("[%lu] stream down, reconnecting\n", millis());

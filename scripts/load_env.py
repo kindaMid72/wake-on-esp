@@ -10,8 +10,9 @@ for line in open(path):
     if line and not line.startswith("#") and "=" in line:
         k, v = line.split("=", 1)
         vals[k.strip()] = v.strip()
-for key in ("WIFI_SSID", "WIFI_PASS", "NTFY_HOST", "NTFY_TOPIC", "NTFY_AUTH", "DEVICE_NAME"):
-    if key == "NTFY_AUTH":
+for key in ("WIFI_SSID", "WIFI_PASS", "NTFY_HOST", "NTFY_TOPIC", "NTFY_AUTH", "DEVICE_NAME",
+            "WIFI_SSID2", "WIFI_PASS2", "WIFI_SSID3", "WIFI_PASS3"):
+    if key in ("NTFY_AUTH", "WIFI_SSID2", "WIFI_PASS2", "WIFI_SSID3", "WIFI_PASS3"):
         vals.setdefault(key, "")
     elif key == "DEVICE_NAME":
         vals.setdefault(key, "computer")
