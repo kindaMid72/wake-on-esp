@@ -9,7 +9,6 @@ After each wake the board posts a short status message to the same topic, for ex
 ```
 Konz: wake sent (esp32)
 Resumed from sleep in 1.2s, key tapped.
-Trigger: "wake"
 WiFi -58 dBm, up 42 min
 ```
 

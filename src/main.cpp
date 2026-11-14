@@ -49,14 +49,13 @@ static WakeResult doWake() {
 }
 
 // Short status message back to the same ntfy topic: "<DEVICE_NAME> woken" / "wake failed".
-static void sendReply(const WakeResult &r, const String &trigger) {
+static void sendReply(const WakeResult &r) {
   String title = String(DEVICE_NAME) + (r.keySent ? ": wake sent" : ": wake FAILED") + REPLY_TITLE_SUFFIX;
   String body;
   if (!r.keySent) body = "USB keyboard not ready (cable on native port? host not mounted).";
   else if (!r.wasSuspended) body = "Computer was already awake, key tapped.";
   else if (r.resumed) body = "Resumed from sleep in " + String(r.ms / 1000.0, 1) + "s, key tapped.";
   else body = "Wakeup signal sent, host did not resume (wake not enabled?).";
-  if (trigger.length()) body += "\nTrigger: \"" + trigger.substring(0, 40) + "\"";
   body += "\nWiFi " + String(WiFi.RSSI()) + " dBm, up " + String(millis() / 60000) + " min";
 
   WiFiClientSecure c;
@@ -206,7 +205,7 @@ void loop() {
           WakeResult r = doWake();
           Log.printf("[%lu] wake done: suspended=%d resumed=%d key=%d %lums\n", millis(),
                          r.wasSuspended, r.resumed, r.keySent, (unsigned long)r.ms);
-          sendReply(r, jsonField(line, "message"));
+          sendReply(r);
         }
       }
       String t = jsonNumber(line, "time");
